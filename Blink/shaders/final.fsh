@@ -33,6 +33,7 @@ void main() {
     
     // 'blink' variable:
     // 0... eyes fully closed
+    // >0 && <1... smoothstep (Hermite) interpolation between fully closed and fully opened
     // 1... eyes fully opened
     // Can get > 1 though. Everything > 1 also means eyes fully opened
 
