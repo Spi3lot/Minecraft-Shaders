@@ -21,15 +21,15 @@ uniform sampler2D gcolor;
 
 
 void main() {
-	// Get the location of the current pixel on the screen.
-	// uv.x ranges from 0 on the left to 1 on the right.
-	// uv.y ranges from 0 at the bottom to 1 at the top.
-	// Change the numbers to grab values from other parts of the screen.
-	vec2 uv = texcoord.st;
-	
-	// Get the color of the pixel pointed to by the uv variable.
-	// color.r is red, color.g is green, color.b is blue, all values from 0 to 1.
-	vec4 color = texture2D(gcolor, uv);
+    // Get the location of the current pixel on the screen.
+    // uv.x ranges from 0 on the left to 1 on the right.
+    // uv.y ranges from 0 at the bottom to 1 at the top.
+    // Change the numbers to grab values from other parts of the screen.
+    vec2 uv = texcoord.st;
+    
+    // Get the color of the pixel pointed to by the uv variable.
+    // color.r is red, color.g is green, color.b is blue, all values from 0 to 1.
+    vec4 color = texture2D(gcolor, uv);
     
     // 'blink' variable:
     // 0... eyes fully closed
@@ -45,7 +45,7 @@ void main() {
     int div = int(worldTime / delay_ticks);
     float blink = min(abs(worldTime - div * delay_ticks), abs(worldTime - (div+1) * delay_ticks)) / blinkDuration_ticks;
 
-	// Here's where we tell Minecraft what color we want this pixel.
+    // Here's where we tell Minecraft what color we want this pixel.
 
     // Vignette Blink
     #if BLINK_MODE == 1
