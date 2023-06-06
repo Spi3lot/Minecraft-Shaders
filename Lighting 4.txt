@@ -1,0 +1,2 @@
+#Thu Apr 21 20:06:14 CEST 2022
+shadowMapResolution=16384

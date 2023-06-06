@@ -1,0 +1,6 @@
+#define LIGHT_MULTIPLIER sqrt(2.0)
+#define LIGHT_THRESHOLD 0.98
+#define WAVE_SIZE 10.0
+#define WAVE_SPEED 0.25
+#define WAVE_AMPLITUDE 0.5
+#define WAVE_DISPLACEMENT -0.3
