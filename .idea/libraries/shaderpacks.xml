@@ -1,0 +1,19 @@
+<component name="libraryTable">
+  <library name="shaderpacks">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/angry_dream.zip!/" />
+      <root url="jar://$PROJECT_DIR$/Chocapic13_V9_Medium.zip!/" />
+      <root url="jar://$PROJECT_DIR$/SEUS PTGI HRR Test 2.1.zip!/" />
+      <root url="jar://$PROJECT_DIR$/wavey_terrain.zip!/" />
+      <root url="jar://$PROJECT_DIR$/Chocapic13_V9_Low.zip!/" />
+      <root url="jar://$PROJECT_DIR$/yes.zip!/" />
+      <root url="jar://$PROJECT_DIR$/Chocapic13_V9_Ultra.zip!/" />
+      <root url="jar://$PROJECT_DIR$/continuum-2.0.4.zip!/" />
+      <root url="jar://$PROJECT_DIR$/most_normal_pack_yet.zip!/" />
+      <root url="jar://$PROJECT_DIR$/CustomTextures.zip!/" />
+      <root url="jar://$PROJECT_DIR$/Chocapic13_V9_High.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
