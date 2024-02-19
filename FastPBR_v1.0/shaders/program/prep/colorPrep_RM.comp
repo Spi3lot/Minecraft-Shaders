@@ -1,0 +1,144 @@
+layout(local_size_x = 16, local_size_y = 1) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+
+#define RSSBO_ENABLE_COLOR
+layout(rgba16f) writeonly uniform image2D colorimg4;
+
+#include "/lib/head.glsl"
+
+#include "/lib/atmos/phase.glsl"
+#include "/lib/atmos/air/atmosphere.glsl"
+
+uniform float eyeAltitude;
+
+uniform vec3 sunDir, moonDir;
+
+
+vec3 atmosphericScattering_Skylight(vec3 direction, mat2x3 lightDirection, vec3 illuminance, mat2x3 illuminanceMod) {
+    vec3 position   = vec3(0.0, eyeAltitude + planetRad, 0.0);
+
+    vec2 airDist    = rsi(position, direction, atmosRad);
+    vec2 planetDist = rsi(position, direction, planetRad);
+
+    bool isPlanet = planetDist.y >= 0.0;
+
+    vec2 dist   = vec2(0.0);
+        dist.x  = isPlanet && planetDist.x < 0.0 ? planetDist.y : max(airDist.x, 0.0);
+        dist.y  = isPlanet && planetDist.x > 0.0 ? planetDist.x : airDist.y;
+
+    float stepSize  = (dist.y - dist.x) / airScatterIterations;
+
+    float rayLocation = dist.x;
+
+    vec3 rayPos     = position + direction * (dist.x + stepSize * 0.5);
+
+    vec3 airmass  = vec3(0.0);
+
+    vec2 cosTheta = vec2(dot(direction, lightDirection[0]), dot(direction, lightDirection[1]));
+    vec4 airPhase = vec4(airPhaseFunction(cosTheta.x), airPhaseFunction(cosTheta.y));
+    const float phaseIso = 0.25 * pi;
+
+    mat2x3 sunScattering    = mat2x3(0.0);
+    mat2x3 moonScattering   = mat2x3(0.0);
+    vec3 multiScattering    = vec3(0.0);
+
+    vec3 transmittance      = vec3(1.0);
+
+    vec2 illuminanceIntensity = vec2(0.0);
+
+    for (uint i = 0; i < airScatterIterations; ++i) {
+        if (airmass.y > 1e35) break;
+        float elevation = length(rayPos) - planetRad;
+
+        vec3 density    = getAirDensity(elevation) * stepSize;
+        illuminanceIntensity += saturate(exp(-max0(elevation) / illuminanceFalloff)) * stepSize;
+
+            airmass    += density;
+
+        vec3 stepOpticalDepth = airExtinctMat * density;
+
+        vec3 stepTransmittance = saturate(expf(-stepOpticalDepth));
+        vec3 stepTransmittedFraction = saturate((stepTransmittance - 1.0) / -stepOpticalDepth);
+        vec3 visScattering  = transmittance * stepTransmittedFraction;
+
+        vec3 sunAirmass = getAirmass(rayPos, lightDirection[0], airmassIterations);
+        vec3 moonAirmass = getAirmass(rayPos, lightDirection[1], airmassIterations);
+
+        vec3 sunlightAtten = exp(-airExtinctMat * sunAirmass) * visScattering;
+        vec3 moonlightAtten = exp(-airExtinctMat * moonAirmass) * visScattering;
+
+        sunScattering[0]   += sunlightAtten * density.x;
+        sunScattering[1]   += sunlightAtten * density.y;
+
+        moonScattering[0]  += moonlightAtten * density.x;
+        moonScattering[1]  += moonlightAtten * density.y;
+
+        multiScattering    += (airScatterMat * density.xy) * visScattering;
+
+        rayPos     += direction * stepSize;
+
+        transmittance *= stepTransmittance;
+    }
+
+    illuminanceIntensity    = max0(illuminanceIntensity / atmosDepth);
+
+    //return vec3(illuminanceIntensity.xyy);
+
+    sunScattering[0]   *= airPhase.x;
+    sunScattering[1]   *= airPhase.y;
+
+    moonScattering[0]  *= airPhase.z;
+    moonScattering[1]  *= airPhase.w;
+
+    vec3 sunColor   = airScatterMat[0] * sunScattering[0] + airScatterMat[1] * sunScattering[1];
+        sunColor   *= sunIllum;
+
+    vec3 moonColor  = airScatterMat[0] * moonScattering[0] + airScatterMat[1] * moonScattering[1];
+        moonColor  *= avgOf(moonIllum) * vec3(0.7, 0.9, 1.0);
+
+    vec2 illumPhase = mix(airPhase.xz, vec2(1.0), 0.5);
+
+    vec3 multiIllum = getLuma(illuminance) * pow(normalize(illuminance), vec3(rpi)) * illuminanceIntensity.x * halfPi;
+        multiIllum += illuminance.z * illuminanceIntensity.y / halfPi;
+        multiIllum *= illuminanceMod[0] * illumPhase.x + illuminanceMod[1] * illumPhase.y;
+        //multiIllum *= direction.x > 0.0 ? 1.0 : 0.0;
+
+    vec3 multiColor = multiScattering * (illuminance * sqrt2 * skyIlluminanceMult + multiIllum * skyMultiscatterMult) * phaseIso;
+
+    return sunColor + moonColor + multiColor;
+}
+
+shared mat2x3 CelestialLight;
+
+void main() {
+    uint Index = uint(gl_GlobalInvocationID.x);
+
+    switch (Index) {
+        case 2:
+            vec3 Sunlight = sunIllum * getAirTransmittance(vec3(0, planetRad + 64.0, 0), sunDir);
+            CelestialLight[0] = Sunlight;
+            RColorTable.Sunlight = Sunlight;
+
+        case 3:
+            vec3 Moonlight = moonIllum * getAirTransmittance(vec3(0, planetRad + 64.0, 0), moonDir);
+            CelestialLight[1] = Moonlight;
+            RColorTable.Moonlight = Moonlight
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    switch (Index) {
+        case 0:
+            mat2x3 CelestialIllum = mat2x3(CelestialLight[0] / sunIllum.r, CelestialLight[1] / moonIllum.b);
+            vec3 Illuminance = atmosphericScattering_Skylight(vec3(0, 1, 0), mat2x3(sunDir, moonDir), vec3(0), CelestialIllum);
+            vec3 SkylightSimple = atmosphericScattering_Skylight(vec3(0, 1, 0), mat2x3(sunDir, moonDir), Illuminance, CelestialIllum);
+
+            RColorTable.Skylight = SkylightSimple;
+            RColorTable.AtmosIlluminance = Illuminance;
+
+            imageStore(colorimg4, ivec2(0,0), vec4(SkylightSimple, 1));
+            imageStore(colorimg4, ivec2(1,0), vec4(Illuminance, 1));
+    }
+
+}

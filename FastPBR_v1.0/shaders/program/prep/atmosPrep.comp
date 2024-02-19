@@ -1,0 +1,211 @@
+layout(local_size_x = 8, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(32, 32, 1);
+
+layout(rgba16f) writeonly uniform image2D colorimg3;
+layout(rgba16f) writeonly uniform image2D colorimg5;
+
+uniform sampler2D colortex4, noisetex;
+
+#define RSSBO_ENABLE_COLOR
+#include "/lib/head.glsl"
+
+#include "/lib/atmos/project.glsl"
+#include "/lib/atmos/phase.glsl"
+#include "/lib/atmos/air/atmosphere.glsl"
+
+uniform int frameCounter, worldTime;
+
+uniform float eyeAltitude, frameTimeCounter, wetness, worldAnimTime;
+
+uniform vec3 sunDir, moonDir, cloudLightDir, cameraPosition;
+
+const ivec2 TileSize = ivec2(gl_WorkGroupSize.xy);
+const int TileSamples = TileSize.x * TileSize.y;
+
+shared vec3 SkyboxAveraged[TileSize.x][TileSize.y];
+
+shared mat2x3 CelestialIllum;
+
+#include "/lib/frag/noise.glsl"
+#include "/lib/atmos/clouds/common.glsl"
+
+#define gl_FragCoord gl_GlobalInvocationID
+
+#include "/lib/frag/bluenoise.glsl"
+
+#define RSKY_RVC_Samples 60
+
+vec4 RSKY_CloudSystem(vec3 WorldDirection, float Dither, float Noise, vec3 SkyColor) {
+    if (WorldDirection.y < 0.0) return vec4(0,0,0,1);
+
+    vec3 DirectColor = RColorTable.CloudDirectLight;
+    vec3 AmbientColor = RColorTable.CloudSkylight * pi;
+    float vDotL = dot(WorldDirection, cloudLightDir);
+
+    float eyeAltitude = 64.0;
+    vec3 cameraPos = vec3(cameraPosition.x, eyeAltitude, cameraPosition.z);
+
+    vec4 Result = vec4(0,0,0,1);
+
+    #ifdef RSKY_VC_Enabled
+    {
+
+    mat2x3 VolumeBounds = mat2x3(WorldDirection * ((RSKY_VolumeLimits.x - eyeAltitude) / WorldDirection.y),
+                                 WorldDirection * ((RSKY_VolumeLimits.y - eyeAltitude) / WorldDirection.y));
+
+    const float BaseStep = RSKY_VC_Depth / (float(RSKY_RVC_Samples));
+    float StepLength = length((VolumeBounds[0] - VolumeBounds[1]) / float(RSKY_RVC_Samples));
+    float StepCoeff = 0.45 + clamp((StepLength / BaseStep) - 1.1, 0.0, 3.0) * 0.5;
+    uint StepCount = uint(float(RSKY_RVC_Samples) * StepCoeff);
+
+    vec3 RStep = (VolumeBounds[1] - VolumeBounds[0]) / StepCount;
+    vec3 RPosition = RStep * Dither + VolumeBounds[0] + cameraPos;
+    float RLength = length(RStep);
+
+    const float SigmaT = 0.1;
+
+    float OpticalDepth = 0.0;
+
+    for (uint I = 0; I < StepCount; ++I, RPosition += RStep) {
+        if (Result.a < 0.01) break;
+        if (RPosition.y > RSKY_VolumeLimits.y || RPosition.y < RSKY_VolumeLimits.x) continue;
+
+        float SampleDistance = distance(RPosition, cameraPos);
+        if (SampleDistance > RSKY_VC_ClipDistance) continue;
+
+        float Density = RSKY_VC_Shape(RPosition);
+        if (Density <= 0.0) continue;
+
+        float StepOpticalDepth = Density * SigmaT * RLength;
+        float StepTransmittance = exp(-StepOpticalDepth);
+        float ScatterIntegral = (1.0 - StepTransmittance) / SigmaT;
+
+        vec3 StepScattering = vec3(0);
+
+        vec2 LightExtinction = vec2(RSKY_VC_DirLightOD(RPosition, 6, Noise),
+                                    RSKY_VC_AmbLightOD(RPosition, 4, Noise));
+
+        const float Albedo = 0.83;
+        const float ScatterMult = 1.0;
+
+        float AvgTransmittance = exp(-((tau / SigmaT) * Density));
+        float BounceEstimate = EstimateEnergy(Albedo * (1.0 - AvgTransmittance));
+        float BaseScatter = Albedo * (1.0 - StepTransmittance);
+        vec3 PhaseG = pow(vec3(0.5, 0.35, 0.9), vec3((1.0 + (LightExtinction.x + Density * RLength) * SigmaT)));
+
+        float DirScatterScale = pow(1.0 + 1.5 * LightExtinction.x * SigmaT, -1.0 / 1.0) * BounceEstimate;
+        float AmbScatterScale = pow(1.0 + 1.5 * LightExtinction.y * SigmaT, -1.0 / 1.0) * BounceEstimate;
+
+            StepScattering.xy = BaseScatter * vec2(cloudPhase(vDotL, PhaseG) * DirScatterScale,
+                                                   cloudPhaseSky(WorldDirection.y, PhaseG * vec3(1,1,0.5)) * AmbScatterScale);
+
+
+        vec3 SkyFade = exp(-SampleDistance * 3.5e-5 * vec3(0.83, 0.89, 1.0));
+            SkyFade = mix(SkyFade, vec3(0), sstep(SampleDistance, RSKY_VC_ClipDistance * 0.7, RSKY_VC_ClipDistance));
+            StepScattering = DirectColor * StepScattering.x + AmbientColor * StepScattering.y;
+            StepScattering = mix(SkyColor * SigmaT * ScatterIntegral, StepScattering, SkyFade);
+
+        OpticalDepth += StepOpticalDepth;
+
+        Result = vec4((StepScattering * Result.a) + Result.rgb, Result.a * StepTransmittance);
+    }
+
+    Result.a = linStep(Result.a, 0.01, 1.0);
+    }
+    #endif
+
+    #ifdef RSKY_PC_Enabled
+    if (Result.a > 0.0) {
+
+    mat2x3 VolumeBounds = mat2x3(WorldDirection * ((RSKY_PlanarBounds.x - eyeAltitude) / WorldDirection.y) + cameraPos,
+                                 WorldDirection * ((RSKY_PlanarBounds.y - eyeAltitude) / WorldDirection.y) + cameraPos);
+
+    float RLength = distance(VolumeBounds[0], VolumeBounds[1]);
+    vec3 RPosition = WorldDirection * ((RSKY_PlanarElevation - eyeAltitude) / WorldDirection.y) + cameraPos;
+
+    const float SigmaT = 0.01;
+    float SampleDistance = distance(RPosition, cameraPos);
+    float Density = RSKY_PC_Shape(RPosition) * rpi;
+    float StepOpticalDepth = Density * SigmaT * RLength;
+    float StepTransmittance = exp(-StepOpticalDepth);
+    float ScatterIntegral = (1.0 - StepTransmittance) / SigmaT;
+
+    vec3 StepScattering = vec3(0);
+
+    vec2 LightExtinction = vec2(RSKY_PC_LightOD(mix(RPosition, VolumeBounds[0], max0(cloudLightDir.y)), cloudLightDir, 5, Noise),
+                                RSKY_PC_LightOD(VolumeBounds[0], vec3(0,1,0), 4, Noise)) * pi;
+
+    const float Albedo = 0.9;
+    const float ScatterMult = 1.0;
+
+
+    float AvgTransmittance = exp(-((2.0 / SigmaT) * Density));
+    float BounceEstimate = EstimateEnergy(Albedo * (1.0 - AvgTransmittance));
+    float BaseScatter = Albedo * (1.0 - StepTransmittance);
+    vec3 PhaseG = pow(vec3(0.6, 0.35, 0.9), vec3((1.0 + (LightExtinction.x + Density * RLength) * SigmaT * rpi)) * vec3(1, 1, 0.25));
+
+    float DirScatterScale = pow(1.0 + 1.5 * LightExtinction.x * SigmaT, -1.0 / 1.0) * BounceEstimate;
+    float AmbScatterScale = pow(1.0 + 1.5 * LightExtinction.y * SigmaT, -1.0 / 1.0) * BounceEstimate * rpi;
+
+        StepScattering.xy = BaseScatter * vec2(cloudPhase(vDotL, PhaseG) * DirScatterScale,
+                                                cloudPhaseSky(WorldDirection.y, PhaseG * vec3(1,1,0.5)) * AmbScatterScale);
+
+    vec3 SkyFade = exp(-SampleDistance * 3e-5 * vec3(0.83, 0.89, 1.0));
+        SkyFade = mix(SkyFade, vec3(0), sstep(SampleDistance, RSKY_VC_ClipDistance * 0.7, RSKY_VC_ClipDistance));
+        StepScattering = DirectColor * StepScattering.x + AmbientColor * StepScattering.y;
+        StepScattering = mix(SkyColor * SigmaT * ScatterIntegral, StepScattering, SkyFade);
+
+    Result = vec4((StepScattering * Result.a) + Result.rgb, Result.a * StepTransmittance);
+
+    }
+    #endif
+
+    return Result;
+}
+
+void main() {
+    if (ivec2(gl_LocalInvocationID.xy) == ivec2(0)) {
+        CelestialIllum = mat2x3(RColorTable.Sunlight / sunIllum.r, RColorTable.Moonlight / moonIllum.b);
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    ivec2 UV = ivec2(gl_GlobalInvocationID.xy);
+    vec2 ProjectionUV = (gl_GlobalInvocationID.xy + 0.5) / vec2(256, 128);
+
+    vec3 Direction = unprojectSky(ProjectionUV);
+
+    mat2x3 AtmosphereData = GetAtmosphere(Direction, mat2x3(sunDir, moonDir), RColorTable.AtmosIlluminance, CelestialIllum);
+    vec3 SkyboxCapture = AtmosphereData[0] * (cube(linStep(1.02 + Direction.y, 0.8, 1.0)) * 0.8 + 0.2);
+
+    #ifdef RSKY_CloudReflections
+    vec4 Clouds = RSKY_CloudSystem(Direction, ditherBluenoiseStatic(), 0.0, SkyboxCapture);
+
+        SkyboxCapture = SkyboxCapture * Clouds.a + Clouds.rgb;
+    #endif
+
+    SkyboxAveraged[int(gl_LocalInvocationID.x)][int(gl_LocalInvocationID.y)] = SkyboxCapture;
+
+    memoryBarrierShared();
+    barrier();
+
+    imageStore(colorimg3, UV, clamp16F(vec4(AtmosphereData[0], 1)));
+    imageStore(colorimg3, UV + ivec2(0, 128), clamp16F(vec4(AtmosphereData[1], 1)));
+    imageStore(colorimg3, UV + ivec2(0, 256), clamp16F(vec4(SkyboxCapture, 1)));
+
+    if (ivec2(gl_LocalInvocationID.xy) == ivec2(0)) {
+
+        vec3 LR_Sky = vec3(0);
+
+        for (int i = 0; i < TileSize.x; ++i) {
+            for (int j = 0; j < TileSize.y; ++j) {
+                LR_Sky += SkyboxAveraged[i][j];
+            }
+        }
+
+        LR_Sky /= TileSamples;
+
+        imageStore(colorimg5, ivec2(gl_WorkGroupID.xy), vec4(LR_Sky, 1));
+    }
+}

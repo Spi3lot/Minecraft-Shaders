@@ -1,0 +1,50 @@
+layout(local_size_x = 8, local_size_y = 8) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+
+uniform sampler2D colortex5;
+
+#define RSSBO_ENABLE_COLOR
+#include "/lib/head.glsl"
+
+#include "/lib/atmos/project.glsl"
+#include "/lib/light/sphericalHarmonics.glsl"
+
+const ivec2 TileSize = ivec2(gl_WorkGroupSize.xy);
+const int TileSamples = TileSize.x * TileSize.y;
+
+shared mat3x4 Irradiance[TileSize.x][TileSize.y];
+
+mat3x4 AddMatrix(mat3x4 In, mat3x4 Add, float Scale) {
+    In[0] += Add[0] * Scale;
+    In[1] += Add[1] * Scale;
+    In[2] += Add[2] * Scale;
+
+    return In;
+}
+
+void main() {
+    ivec2 Index = ivec2(gl_GlobalInvocationID.xy);
+
+    vec2 TileUV = vec2(gl_GlobalInvocationID.xy + 0.5) / vec2(TileSize);
+
+    vec3 TileDirection = unprojectSky(TileUV);
+
+    Irradiance[Index.x][Index.y] = ConvertIrradiance(texelFetch(colortex5, ivec2(Index), 0).rgb * pi4 * vec3(skylightRedMult, skylightGreenMult, skylightBlueMult), TileDirection);
+
+    memoryBarrierShared();
+    barrier();
+
+    if (Index == ivec2(0)) {
+        mat3x4 TotalIrradiance = mat3x4(0);
+
+        for (int x = 0; x < TileSize.x; ++x) {
+            for (int y = 0; y < TileSize.y; ++y) {
+                TotalIrradiance += Irradiance[x][y];
+            }
+        }
+        TotalIrradiance /= TileSamples;
+
+        RColorTable.SkylightSH = mat3x4(TotalIrradiance);
+    }
+
+}

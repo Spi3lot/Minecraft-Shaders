@@ -1,0 +1,9 @@
+option.INFO=SimpleTAA by RRe36
+value.INFO.0=v1.0
+
+option.fogStart=Fog Start
+option.fogExponent=Fog Exponent
+
+option.motionblurToggle=Motionblur
+option.motionblurSamples=Motionblur Samples
+option.motionblurScale=Motionblur Scale

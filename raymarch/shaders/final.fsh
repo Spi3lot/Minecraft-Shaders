@@ -13,9 +13,20 @@ float sdSphere(vec3 p, float r) {
     return length(p) - r;
 }
 
+float sdBoxFrame(vec3 p, vec3 b, float e) {
+    p = abs(p) - b;
+    vec3 q = abs(p + e) - e;
+    return min(min(
+    length(max(vec3(p.x, q.y, q.z), 0.0)) + min(max(p.x, max(q.y, q.z)), 0.0),
+    length(max(vec3(q.x, p.y, q.z), 0.0)) + min(max(q.x, max(p.y, q.z)), 0.0)),
+    length(max(vec3(q.x, q.y, p.z), 0.0)) + min(max(q.x, max(q.y, p.z)), 0.0)
+    );
+}
+
 float map(vec3 p) {
     vec3 center = vec3(0, 100, 0);
-    return sdSphere(p - center, 10.0);
+    //return sdSphere(p - center, 10.0);
+    return sdBoxFrame(p - center, vec3(10, 10, 10), 1.0);
 }
 
 vec3 normal(vec3 p) {

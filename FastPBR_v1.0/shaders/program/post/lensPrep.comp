@@ -1,0 +1,42 @@
+layout(local_size_x = 4, local_size_y = 4) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+
+layout(std430, binding = 1) buffer RLensSSBO {
+    float DoF_Focus;
+} RLensData;
+
+#include "/lib/head.glsl"
+
+uniform int worldTime;
+
+uniform float frameTime;
+
+uniform vec2 viewSize;
+
+uniform sampler2D depthtex2;
+
+shared float DepthSamples[4][4];
+
+void main() {
+    ivec2 Index = ivec2(gl_LocalInvocationID.xy);
+
+    ivec2 CenterPixel = ivec2(viewSize * ResolutionScale * 0.5);
+
+    DepthSamples[Index.x][Index.y] = texelFetch(depthtex2, CenterPixel + Index - 2, 0).x;
+
+    memoryBarrierShared();
+    barrier();
+
+    if (Index == ivec2(0)) {
+        float AvgSample = 0.0;
+
+        for (uint x = 0; x < 4; x++) {
+            for (uint y = 0; y < 4; y++) {
+                AvgSample += DepthSamples[x][y];
+            }
+        }
+        AvgSample /= sqr(4.0);
+
+        RLensData.DoF_Focus = mix(saturate(RLensData.DoF_Focus), saturate(AvgSample), saturate(0.2 * frameTime / (0.033)));
+    }
+}

@@ -1,0 +1,54 @@
+layout(local_size_x = 16, local_size_y = 1) in;
+const ivec3 workGroups = ivec3(1, 1, 1);
+
+#define RSSBO_ENABLE_COLOR
+#include "/lib/head.glsl"
+
+#include "/lib/atmos/phase.glsl"
+#include "/lib/atmos/air/atmosphere.glsl"
+
+uniform int worldTime;
+
+uniform float cloudLightFlip, lightFlip, sunAngle, wetness;
+
+uniform vec3 sunDir, moonDir, cloudLightDir, lightDir;
+
+void main() {
+    uint Index = uint(gl_GlobalInvocationID.x);
+
+    switch (Index) {
+        case 0:
+            vec3 Illuminance = GetAtmosIlluminance(vec3(0, 1, 0), mat2x3(sunDir, moonDir));
+                Illuminance *= (normalizeSafe(Illuminance));
+            mat2x3 SkylightSimple = GetAtmosphere(vec3(0, 1, 0), mat2x3(sunDir, moonDir), Illuminance, mat2x3(0));
+
+            RColorTable.Skylight = SkylightSimple[0] * vec3(skylightRedMult, skylightGreenMult, skylightBlueMult);
+            RColorTable.CloudDirectLight = RColorTable.Skylight;
+            RColorTable.AtmosIlluminance = Illuminance;
+
+        case 2:
+            vec3 Sunlight = sunIllum * exp(-airExtinctMat * GetAtmosphereDensity(sunDir)) * (1.0 - wetness * 0.95);
+
+            RColorTable.Sunlight = Sunlight;
+
+        case 3:
+            vec3 Moonlight = moonIllum * exp(-airExtinctMat * GetAtmosphereDensity(moonDir));
+
+            RColorTable.Moonlight = Moonlight;
+
+        case 4:
+            vec3 DirectLight = exp(-airExtinctMat * GetAtmosphereDensity(lightDir)) * (sunAngle < 0.5 ? sunIllum * (1.0 - wetness * 0.95) : moonIllum);
+
+            RColorTable.DirectLight = DirectLight * lightFlip;
+
+        case 5:
+            RColorTable.Blocklight = RColor_Lightmap * blocklightIllum * blocklightBaseMult;
+
+        case 7:
+            bool IsSun = (worldTime>23000 || worldTime<12900);
+            vec3 LightDirection = normalize(cloudLightDir * vec3(1.0, 1.2, 1.0));
+            vec3 CloudLight = (IsSun ? sunIllum : moonIllum) * exp(-airExtinctMat * GetAtmosphereDensity(LightDirection)) * cloudLightFlip;
+            RColorTable.CloudDirectLight = CloudLight;
+    }
+
+}

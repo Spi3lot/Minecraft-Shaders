@@ -1,0 +1,1 @@
+This folder contains files used for generating specific effects, like flood fill lighting.

@@ -1,0 +1,1 @@
+This include folder has all the required code to simulate a realistic camera. Some things are approximated, for obvious reasons, but all in all things here should be accurate.
